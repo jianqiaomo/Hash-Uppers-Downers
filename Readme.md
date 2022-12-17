@@ -1,6 +1,8 @@
 # Hash Uppers Downers Solution Writeup
 
-Challenge: https://play.fe-ctf.dk/challenges#15-Hash%20Uppers%20Downers or https://ctftime.org/task/23758
+Challenge: https://play.fe-ctf.dk/challenges#15-Hash%20Uppers%20Downers 
+
+or https://ctftime.org/task/23758
 
 In this challenge we are given a customized sha-1 code and the remote server interaction.
 It turns out that if we enter the correct password we will get the flag.
