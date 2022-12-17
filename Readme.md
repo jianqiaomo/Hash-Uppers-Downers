@@ -1,4 +1,4 @@
-# Hash Uppers Downers Solution Writeup
+# FE-CTF 2022: Hash Uppers Downers Solution Writeup
 
 Challenge: https://play.fe-ctf.dk/challenges#15-Hash%20Uppers%20Downers 
 
@@ -7,19 +7,16 @@ or https://ctftime.org/task/23758
 In this challenge we are given a customized sha-1 code and the remote server interaction.
 It turns out that if we enter the correct password we will get the flag.
 
-```
-$ ./main.exe
-== proof-of-work: disabled ==
-Salt: pkDHTxmMR18N2l9
-Password: 
-* Your salt           = pkDHTxmMR18N2l9
-[#######################################           ] 79%
-flag{My h34rt fe3ls l1ke an alligator!}
-
-* Real Password       = kw1Ux
-* Time cost           = 451s
-# Server call         = 57
-# Local hash prepare  = 3876
+```angular2html
+.
+├── Makefile
+├── Readme.md
+├── hash-uppers-downers
+│   ├── server.c       
+│   ├── sha1.c
+│   └── sha1.h
+├── main.cpp
+└── progressbar.hpp
 ```
 
 # Server interaction
@@ -50,139 +47,167 @@ if (n < 0) {
 }
 ```
 
-If the hash of our password matches, it will return the flag. 
-Otherwise, 
+If the hash of our password matches the correct, it will return the flag. 
 
+Otherwise, it returns the comparison result (`>` or `<`).
 
-# The encryption function
+# Evaluate possible solutions
 
-From the above we can see that the `add` function just xors the current block
-with the key.
-The `mul` functions does something more complicated, that however does not
-depend on the key, just the current block and a constant. Looking at how the
-parameters are shifted in the `mul` function (i.e. if one parameter has a bit
-set at index `i` and the other at index `j`, then something happens at index
-`i+j`) we can see that this seems to do some kind of multiplication, where xor
-is used instead of addition.
+There are some common [hash attacks](https://ctf-wiki.mahaloz.re/crypto/hash/attack/). 
+We would evaluate their practicability and pick the easiest one to implement. 
 
-Note that a bit can be considered an element in the field with two elements `𝔽₂`,
-and addition in this field is exactly xor. Similarly, lists of bits can
-be considered as elements of `𝔽₂[x]`, and addition in this polynomial ring
-corresponds exactly to bitwise xor.
-The way one can convert back and forth between such polynomials and natural numbers
-is via the bijection given by evaluation at `2`.
-```
-φ: 𝔽₂[x] -> ℕ
-φ: f ↦ f(2)
-```
+### Hash algorithm incorrectly designed
 
-If we now indeed interpret the block that we are encrypting as an element of
-𝔽₂[x], then the function `add` is indeed just given by addition with the key.
-Furthermore, if `ulong` types had infinite width and we removed the lines
+While reviewing the `sha1.c`, we find that the initial states of SHA-1 are incorrect.
+
 ```C
-    if (bVar1) {
-      bigger_param = bigger_param ^ R;
-    }
+void
+SHA1_Init(SHA1_CTX *ctx)
+{
+    /* SHA1 initialization constants */
+    ctx->s[0] = 0x67452301;
+    ctx->s[1] = 0xEFCDA8B9;
+    ctx->s[2] = 0x98BADCFE;
+    ctx->s[3] = 0x10325476;
+    ctx->s[4] = 0xC3D2E1F0;
+    ctx->c[0] = ctx->c[1] = 0;
+}
 ```
-from the code, then the `mul` function would just be multiplication with
-`φ^{-1}(0x1337)`.
-What the three lines above do is dealing with bits that can not be represented
-due to the highest indexed bit being the one indexed by `63`. Concretely,
-a set bit indexed by `64` is folded back into the block by adding
-the constant `R=0x1b`. This corresponds to carrying out the multiplication
-in the quotient ring `S = 𝔽₂[x]/(x^64 - φ^{-1}(0x1b))`.
-If we write `c = φ^{-1}(0x1b)`, `m = φ^{-1}(0x1337)`, and `k = φ^{-1}(key)`,
-then we can interpret the single encryption round `enc1` as a function
-from `S` to `S` mapping `a` to `m*(a+k) = m*a + m*k`.
+
+The second state `s[1]` should be `0xEFCDAB89` instead of `0xEFCDA8B9` 
+([reference](https://en.wikipedia.org/wiki/SHA-1#SHA-1_pseudocode)).
+
+If we can reverse the incorrect SHA1 hash function, we can implement a binary search to the correct password.
+We start searching in hash digest range `0x00000000000000000000` ~ `0xFFFFFFFFFFFFFFFFFFFF`.
+
+Then we try the middle point:
+`password payload = hash_rev(0x7FFFFFFFFFFFFFFFFFFF)`, send it to the server.
+
+By comparing to the server, if the password payload return a `>`, 
+i.e., the `hash(payload)` is larger than the `hash(real password)` (the `goodhash`),
+then we can set a new hash digest range `0x00000000000000000000` ~ `0x7FFFFFFFFFFFFFFFFFFF`.
+
+**Irreversible**:
+However, further evaluation shows that this idea is _very hard to implement_, because 
+the other parts of the SHA1 is correct. 
+It still contains 80 rounds operations, 
+which is very hard to find a reverse function from a slight difference in the initial state `s[1]`. 
+
+### Common tools
+
+There are some common tools such as [HashCat](https://hashcat.net/hashcat/),
+[HashPump](https://github.com/bwall/HashPump).
+However, since the SHA1 we are given is different from the original SHA1, 
+I **do not** think it is a good option to use or re-implement these tools.
+
+### Collision
+
+SHA1 is no longer safe, because Google has previously published two pdfs with the same sha1 value, please refer to [Shattered](https://shattered.io/).
+
+As our goal is to find the correct password (we don't know the real password target), 
+I think collision may **not** be a good way to attack.
 
 
-# The weakness
+### Brute force
 
-What happens if we apply `enc1` multiple times? If we apply it twice we
-will map `a` to `m*(m*a + m*k) + m*k = m^2*a + (m^2*k + m*k)`.
-By induction one can easily prove that `enc1^n` maps `a` to
-`m^n + (m^n*k + m^{n-1}*k + ... + m^2*k + m*k)`.
+We find the length of the real password is 5 and 
+restricted to 62 characters library.
 
-If we write `K = m^1000000*k + ... + m*k`, then this implies that the encryption
-function maps `a` to `m^1000000*a + K`, where `m` is known.
-If we know a single cleartext-ciphertext-pair `(a, m^1000000*a + K)`
-we will thus be able to recover `K` as `K = (m^1000000*a + K) - m^1000000*a`.
-We can then decrypt arbitrary encrypted blocks by subtracting `K` and
-dividing by `m^1000000`.
+```C
+char x[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz"
+    "0123456789";
+    
+assert(strlen(PASSWORD) <= 5);
+```
 
+Hence, there are only 62^5 = 916,132,832 possibilities. 
+It seems to be a quite small number, but as the server needs more than
+1 second to reply a request,
 
-# The solution
+```C
+for (;;) {
+    sleep(1);
+    // ...
+}
+```
 
-To obtain `K` we send a number `a` (it doesn't matter which one, but testing that
-we get the same result for different ones is a good way to check that our
-analysis was correct) and recover `K` using the calculation just described:
+the worst case will require 916,132,832 second (29 years).
+
+### Better brute force and binary search
+
+We find that the random salt for hash is **fixed**,
+because the `rand()` use the process pid as seed.
+Every time we log in to the server, the salt is a fixed string.
+
+Therefore, we can implement a binary search with the compare result 
+from server.
+If we can generate hash digests for all password possibilities, sort 
+them by their digests, then we can find the correct password by binary search.
+
 ```python
-s = pwnlib.tubes.remote.remote(HOST, PORT)
-to_send = p64(a, endian="little")
-s.send(to_send)
-s.shutdown("write")
-data = s.recv()
-enc_a = u64(data, endian="little")
-a_part = mul(a, power(mul_const, rounds))
-key_part = add(a_part, enc_a)
-```
-The variable `mul_const` here is what was called `m` so far and
-`rounds=1000000`.  Note that addition in subtraction is the same in 𝔽₂.
-Finally, the reason `s.shutdown("write")` is called is because `magic` will
-only output an answer after `stdin` has been closed, so when interacting with
-the remote we have to close the connection in the send direction. I had a
-little trouble with how to do this, but luckily an organizer helped me.
+password_a = '.....'
+# ......
+password_z = '.....'
 
-After we have obtained `K`, we still have to figure out how to divide by
-`m^1000000` in order to be able to decrypt. For this we need to obtain
-the multiplicative inverse of `m` in `𝔽₂[x]/(x^64 - φ^{-1}(0x1b))`.
-
-For this we use sage:
-```python
-$ sage
-┌────────────────────────────────────────────────────────────────────┐
-│ SageMath version 9.5, Release Date: 2022-01-30                     │
-│ Using Python 3.10.8. Type "help()" for help.                       │
-└────────────────────────────────────────────────────────────────────┘
-sage: F = FiniteField(2)
-sage: P = F[x]
-sage: C = 1 + x + x**3 + x**4
-sage: S = P.quotient(x**64 - C)
-sage: xbar = S.gen()
-sage: n = 0x1337
-sage: i = 0
-sage: m = 0
-sage: while n > 0:
-....:     if n & 1:
-....:         m += xbar^(i)
-....:     n = n >> 1
-....:     i += 1
-....: 
-sage: m^(-1)
-xbar^58 + xbar^55 + xbar^53 + xbar^52 + xbar^48 + xbar^44 + xbar^40 + xbar^38 + xbar^37 + xbar^36 + xbar^35 + xbar^34 + xbar^31 + xbar^29 + xbar^28 + xbar^27 + xbar^26 + xbar^25 + xbar^23 + xbar^19 + xbar^16 + xbar^15 + xbar^13 + xbar^11 + xbar^10 + xbar^9 + xbar^4 + xbar^2 + 1
-```
-Setting `xbar = 2` and evaluating the last expression we obtain the natural
-number corresponding to `m^(-1)`.
-
-Now the flag can be decrypted as follows:
-```python
-xbar = 2
-mul_const_inv = xbar**58 + xbar**55 + xbar**53 + xbar**52 + xbar**48 + xbar**44 + xbar**40 + xbar**38 + xbar**37 + xbar**36 + xbar**35 + xbar**34 + xbar**31 + xbar**29 + xbar**28 + xbar**27 + xbar**26 + xbar**25 + xbar**23 + xbar**19 + xbar**16 + xbar**15 + xbar**13 + xbar**11 + xbar**10 + xbar**9 + xbar**4 + xbar**2 + 1
-mul_const_inv_power_rounds = power(mul_const_inv, rounds)
-
-with open("flag.enc", "rb") as fh:
-    ciphertext = fh.read()
-
-flag = b''
-for i in range(0, len(ciphertext), 8):
-    ciphertext_block = ciphertext[i:i+8]
-    ciphertext_block_number = u64(ciphertext_block)
-    no_key_part = add(ciphertext_block_number, key_part)
-    cleartext_number = mul(no_key_part, mul_const_inv_power_rounds)
-    cleartext = p64(cleartext_number)
-    flag += cleartext
+sorted_payload = {
+    password_a: hash(password_a),  # lower bound
+    # ......
+    password_z: hash(password_z)   # upper bound
+}
 ```
 
-The flag is appropriately `flag{90% of crypto: division is hard}` :). 
+SHA-1 is fast, with [~587.9](https://automationrhapsody.com/md5-sha-1-sha-256-sha-512-speed-performance/) ms per 1M operations, thus 
+it is practical to prepare all of them.
+However, it would take a huge storage cost. Each password and its hash digest need 6 + 20 = 26 Bytes, totally 
+916,132,832 * 26 Byte = 22 GB.
 
-The file `solve.py` contains my solution script exactly as I used it during the CTF.
+# Our solution
+
+As saving all 916,132,832 possibilities is hard, we break the entire task to smaller separations.
+We set the first 3 digits in the password fixed and only the lower 2 digits of the passwords are sweep in password 
+library. 
+Thus, there are only 62^2 = 3844 in each round, and totally 62^3 = 238328 rounds.
+
+We follow these steps in each round:
+1. Prepare 3844 passwords. If `hash(password)` is out-of-range, drop it. 
+2. Sorted the passwords from low to high of their digest.
+3. Send them to server for binary search, update the hash digest range. Start a new round.
+
+## How to run
+
+Build the program in `main.cpp`.
+
+```
+$ make
+```
+
+We can also evaluate the performance.
+
+```
+$ ./main.exe
+== proof-of-work: disabled ==
+Salt: pkDHTxmMR18N2l9
+Password: 
+* Your salt           = pkDHTxmMR18N2l9
+[#######################################           ] 79%
+flag{My h34rt fe3ls l1ke an alligator!}
+
+* Real Password       = kw1Ux
+* Time cost           = 451s
+# Server call         = 57
+# Local hash prepare  = 3876
+```
+
+Therefore we find the `flag`. 
+
+The result shows that we call 57 times to the server.
+Totally only 3876 hash digests are saved and used, which means we find a small hash digest range and most of the other
+passwords are out-of-range (dropped).
+
+# Acknowledgement
+
+https://github.com/gipert/progressbar
+
+https://ctf-wiki.mahaloz.re/
