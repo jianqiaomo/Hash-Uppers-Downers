@@ -1,5 +1,20 @@
 # FE-CTF 2022: Hash Uppers Downers Solution Writeup
 
+---
+
+- [Server interaction](#server-interaction)
+- [Evaluate possible solutions](#evaluate-possible-solutions)
+    + [Hash algorithm incorrectly designed](#hash-algorithm-incorrectly-designed)
+    + [Common tools](#common-tools)
+    + [Collision](#collision)
+    + [Brute force](#brute-force)
+    + [Better brute force and binary search](#better-brute-force-and-binary-search)
+- [Our solution](#our-solution)
+  * [How to run](#how-to-run)
+- [Acknowledgement](#acknowledgement)
+
+---
+
 Challenge: https://play.fe-ctf.dk/challenges#15-Hash%20Uppers%20Downers 
 
 or https://ctftime.org/task/23758
